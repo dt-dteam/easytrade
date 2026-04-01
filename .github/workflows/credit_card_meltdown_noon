@@ -1,0 +1,51 @@
+name: Feature Flag Toggle (Noon ET)
+
+on:
+  schedule:
+    # GitHub cron runs in UTC.
+    # These times correspond to NOON and MIDNIGHT in Eastern Time *most of the year*.
+    # - 17:00 UTC ≈ 12:00 ET (EST)
+    # - 05:00 UTC ≈ 00:00 ET (EST)
+    #
+    # DST NOTE:
+    # During EDT (summer), Eastern shifts by 1 hour. See note below for options.
+    - cron: "0 17 * * *"
+    #- cron: "0 5 * * *"
+  workflow_dispatch: {}  # allow manual runs
+
+jobs:
+  toggle-flag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call feature-flag-service API
+        run: |
+          echo "Updating feature flag ${FEATURE_ID} to enabled=${VALUE}"
+          curl -X PUT "http://http://9.169.72.105/feature-flag-service/v1/flags/credit_card_meltdown" \
+            -H "Content-Type: application/json" \
+            -d '{"enabled": true}'
+        # available feature_ids: factory_crisis. credit_card_meltdown, high_cpu_usage, ergo_aggregator_slowdown, db_not_responding
+
+      - name: Send SDLC event to Dynatrace
+        run: |
+          curl -i -X POST "${{ secrets.DT_URL }}/platform/ingest/v1/events.sdlc" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Api-Token ${{ secrets.DT_TOKEN }}" \
+              -d "{\"event.type\":\"problem_pattern_toggle\", \"event.status\":\"finished\", \"event.description\":\"Toggling the factory_crisis easytrade problem pattern ON.\"}"
+        
+      - name: Send custom deployment event to Dynatrace
+        uses: dynatrace-oss/dynatrace-github-action@v9
+        with:
+          url: ${{ secrets.DT_URL }}
+          token: ${{ secrets.DT_TOKEN_EVENT_INGEST }}
+          events: |
+            - title: Factory Crisis Problem Pattern toggle Event
+              type: CUSTOM_DEPLOYMENT
+              entitySelector: type(kubernetes_cluster),entityName(easytrade)
+              properties:
+                source: GitHub
+                description: Toggling the factory_crisis easytrade problem pattern ON. 
+                github.repository: "${{ github.repository }}"
+                github.ref: "${{ github.ref }}"
+                github.event_name: "${{ github.event_name }}"
+                github.actor: "${{ github.actor }}"
